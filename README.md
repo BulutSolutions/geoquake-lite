@@ -69,13 +69,6 @@ packs the core set; use `--version 2` when packing:
 python3 tools/tile_generator/pack_core_tiles.py <tiles dir> <output.pak> --version 2
 ```
 
-## Publishing
-
-The workflow in `.github/workflows/build.yml` builds, tests and publishes the
-firmware. In the repository settings, set **Pages > Build and deployment >
-Source** to **GitHub Actions**, and allow deployments from tags (**Settings >
-Environments > github-pages > Deployment branches and tags**).
-
 ## Credits
 
 Built with LVGL, Arduino-ESP32, ESP-IDF, the GFX Library for Arduino,
