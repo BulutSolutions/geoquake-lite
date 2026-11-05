@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install GeoQuake Lite</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0b0f14;
+      color: #e6edf3;
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main {
+      width: min(680px, 90vw);
+      padding: 40px 0;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+      font-weight: 600;
+    }
+    p { margin: 0 0 16px; }
+    .muted { color: #9aa7b4; }
+    .warning {
+      margin: 24px 0;
+      padding: 14px 16px;
+      border: 1px solid #7a4a17;
+      border-radius: 8px;
+      background: #2a1c0d;
+      color: #ffd9a8;
+    }
+    .install {
+      margin: 28px 0;
+      text-align: center;
+    }
+    .install esp-web-install-button { display: inline-block; }
+    a { color: #7cc4ff; }
+    footer { margin-top: 32px; color: #6f7c89; font-size: 0.9rem; }
+  </style>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+</head>
+<body>
+  <main>
+    <h1>Install GeoQuake Lite</h1>
+    <p class="muted">Live earthquakes on a desk AMOLED.</p>
+
+    <div class="warning">
+      <strong>Warning:</strong> installing erases everything on the board: any
+      other firmware and its settings, saved Wi-Fi networks, and files in its
+      flash.
+    </div>
+
+    <p>
+      You need a Waveshare ESP32-S3-Touch-AMOLED-2.16, a USB-C cable, and
+      Chrome or Edge on a desktop computer. Connect the board before you
+      press the button.
+    </p>
+
+    <div class="install">
+      <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+    </div>
+
+    <p>
+      After flashing, use <strong>Connect to Wi-Fi</strong> in the installer to
+      join your network.
+    </p>
+
+    <p>
+      To change Wi-Fi later, choose <strong>Settings &gt; Forget Wi-Fi</strong>
+      on the device, then open this installer page again and choose
+      <strong>Connect to Wi-Fi</strong>.
+    </p>
+
+    <p>
+      Read the
+      <a href="https://github.com/BulutSolutions/geoquake-lite#readme">README</a>
+      for what is in the box, how to build from source, and the map pack.
+    </p>
+
+    <footer>
+      MIT licensed. See
+      <a href="LICENSE">LICENSE</a>,
+      <a href="THIRD_PARTY_NOTICES.md">third-party notices</a> and
+      <a href="licenses/THIRD_PARTY_LICENSES.txt">license texts</a>.
+    </footer>
+  </main>
+</body>
+</html>

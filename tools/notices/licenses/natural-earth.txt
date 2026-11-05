@@ -1,0 +1,8 @@
+Natural Earth
+
+Natural Earth (naturalearthdata.com) is a public-domain map dataset: no
+permission is needed to use it, and no credit is required (credit is welcome).
+
+The map tiles and the core map pack in this project are drawn from Natural
+Earth data by tools/tile_generator. Natural Earth is made by the Natural Earth
+project and its contributors; see https://www.naturalearthdata.com/about/.

@@ -1,0 +1,129 @@
+name: build
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            platformio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio==6.2.0
+
+      - name: Build firmware
+        run: pio run -e geoquake_lite
+
+      - name: Build LittleFS image
+        run: pio run -e geoquake_lite -t buildfs
+
+      - name: Build third-party notices
+        run: python3 tools/notices/build_notices.py
+
+      - name: Run native tests
+        run: pio test -e native
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            platformio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio==6.2.0
+
+      - name: Build firmware
+        run: pio run -e geoquake_lite
+
+      - name: Build LittleFS image
+        run: pio run -e geoquake_lite -t buildfs
+
+      - name: Build third-party notices
+        run: python3 tools/notices/build_notices.py
+
+      - name: Download the Arduino core source
+        run: curl -sSfL -o arduino-esp32-2.0.17.tar.gz https://github.com/espressif/arduino-esp32/archive/refs/tags/2.0.17.tar.gz
+
+      - name: Copy images and notices for the installer
+        run: |
+          mkdir -p docs/firmware docs/licenses
+          cp .pio/build/geoquake_lite/bootloader.bin docs/firmware/
+          cp .pio/build/geoquake_lite/partitions.bin docs/firmware/
+          cp .pio/build/geoquake_lite/firmware.bin docs/firmware/
+          cp .pio/build/geoquake_lite/littlefs.bin docs/firmware/
+          cp LICENSE THIRD_PARTY_NOTICES.md docs/
+          cp licenses/THIRD_PARTY_LICENSES.txt docs/licenses/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: |
+            docs/firmware/bootloader.bin
+            docs/firmware/partitions.bin
+            docs/firmware/firmware.bin
+            docs/firmware/littlefs.bin
+            LICENSE
+            THIRD_PARTY_NOTICES.md
+            licenses/THIRD_PARTY_LICENSES.txt
+            arduino-esp32-2.0.17.tar.gz
+
+  deploy:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,0 +1,6 @@
+U.S. Geological Survey earthquake data
+
+Earthquake data is produced by the U.S. Geological Survey (USGS) and is in the
+public domain. USGS asks that it be credited as the source.
+
+Source: https://earthquake.usgs.gov/earthquakes/feed/
