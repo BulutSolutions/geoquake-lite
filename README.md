@@ -4,9 +4,9 @@ Live earthquakes on a desk AMOLED.
 
 ![GeoQuake Lite on the Waveshare ESP32-S3-Touch-AMOLED-2.16](docs/geoquake-lite.gif)
 
-https://github.com/user-attachments/assets/1f840d83-4249-49ae-b4f5-600dd7d08b8b
+https://github.com/user-attachments/assets/2f4cae7a-0c64-4eda-93ab-91b1c6f25492
 
-[Watch the 1-minute video](https://bulutsolutions.github.io/geoquake-lite/geoquake-lite-demo.mp4)
+[Watch the demo video](https://github.com/BulutSolutions/geoquake-lite/raw/main/docs/geoquake-lite-demo.mp4) (58 s, recorded in a host emulator running the same code)
 
 ## What it does
 
