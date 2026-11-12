@@ -4,6 +4,7 @@
 #include "config_constants.h"
 #include "sd_card.h"
 #include "tile_manager.h"
+#include "tile_pak.h"
 #include "lv_fs_flash.h"
 #include "map_mercator.h"
 #include "map_projection.h"
@@ -192,17 +193,25 @@ void map_tiles_refresh_availability(void) {
         Serial.println("[MAP_TILES] Tile cache in use - tile source kept");
         return;
     }
-    static tile_pak::Index index;  // 2.7 KB: kept off the calling task's stack
+    // The index is 43.7 KB: parsed into a temporary PSRAM block here, copied by the tile manager when it accepts it.
+    tile_pak::Index* index = tile_pak_alloc_index();
+    if (!index) {
+        Serial.println("[MAP_TILES] No memory to read the map pack index - tile source kept");
+        return;
+    }
     const char* where = nullptr;
     bool on_sd = false;
-    if (flash_load_core_pak(&index)) {
-        where = "in flash";  // bundled pack wins; SD z5/z6 detail tiles are still used
-    } else if (sd_load_core_pak(&index)) {
+    if (flash_load_core_pak(index)) {
+        where = "in flash";  // bundled pack wins; loose SD detail tiles only add levels above the pack's own
+    } else if (sd_load_core_pak(index)) {
         where = "on the SD card";
         on_sd = true;
     }
     // Refused while a decode that outlived tile_cache_deinit() still runs: keep the current state.
-    if (!tile_manager_set_tile_source(where ? &index : nullptr, on_sd, sd_detail_tile_level())) return;
+    const bool accepted = tile_manager_set_tile_source(where ? index : nullptr, on_sd, sd_detail_tile_level());
+    const unsigned levels = index->levels;
+    tile_pak_free_index(index);
+    if (!accepted) return;
     if (!where) {
         tiles_available = false;
         Serial.println("[MAP_TILES] No map pack in flash or on the SD card - using vector mode");
@@ -212,7 +221,7 @@ void map_tiles_refresh_availability(void) {
     if (current_z > tile_manager_get_max_tile_level()) {
         current_z = tile_manager_get_max_tile_level();
     }
-    Serial.printf("[MAP_TILES] Core map pack %s - tile mode available\n", where);
+    Serial.printf("[MAP_TILES] Map pack %s (z1-z%u) - tile mode available\n", where, levels);
 }
 
 // --- INITIALIZATION ---

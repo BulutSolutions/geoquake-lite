@@ -9,7 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <chrono>
-#include "qoi_decoder.h"
+#include <set>
+#include <utility>
+#include "../src/qoi_decoder.h"  // the decoder the firmware's tile manager uses
 #include "../src/tile_pak_format.h"
 
 #ifndef GQ_PROJECT_DIR
@@ -133,12 +135,14 @@ void test_qoi_equivalence_real_and_malformed() {
     Buf pack = read_file(pack_path);
     TEST_ASSERT_NOT_NULL_MESSAGE(pack.p, pack_path);
 
-    tile_pak::Index index;
-    const tile_pak::Result parsed =
-        tile_pak::parse(pack.p, tile_pak::kTocEnd, static_cast<uint32_t>(pack.n), &index);
+    static tile_pak::Index index;  // 43.7 KB: off the stack
+    const tile_pak::Result parsed = tile_pak::parse(pack.p, pack.n, static_cast<uint32_t>(pack.n), &index);
     TEST_ASSERT_EQUAL_STRING_MESSAGE("ok", tile_pak::result_name(parsed), pack_path);
 
-    const int count = static_cast<int>(tile_pak::kTileCount);
+    // Every distinct payload once: the pack stores identical tiles (plain sea, plain land) a single time.
+    const int slots = static_cast<int>(tile_pak::tile_count(index.levels));
+    std::set<std::pair<uint32_t, uint32_t>> seen;
+    int count = 0;
     uint8_t* out_old = (uint8_t*)malloc(kOut + kGuard);
     uint8_t* out_new = (uint8_t*)malloc(kOut + kGuard);
     TEST_ASSERT_NOT_NULL(out_old);
@@ -148,12 +152,14 @@ void test_qoi_equivalence_real_and_malformed() {
 
     int real_ok = 0, real_decoded = 0, malformed = 0, failures = 0;
     double t_old = 0.0, t_new = 0.0;
-    for (int i = 0; i < count; ++i) {
-        const tile_pak::Entry& e = index.entry[i];
+    for (int slot = 0; slot < slots; ++slot) {
+        const tile_pak::Entry& e = index.entry[slot];
+        if (!seen.insert({e.offset, e.length}).second) continue;
+        const int i = count++;  // index among the distinct payloads
         const uint8_t* data = pack.p + e.offset;
         const size_t len = e.length;
         char label[48];
-        snprintf(label, sizeof(label), "core.pak slot %d", i);
+        snprintf(label, sizeof(label), "core.pak slot %d", slot);
         if (compare_one(data, len, label, out_old, out_new)) ++real_ok; else ++failures;
         if (legacy_qoi_decode(data, len, out_old, kW, kH, false)) {
             ++real_decoded;

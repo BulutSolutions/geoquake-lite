@@ -30,9 +30,12 @@ static bool manager_initialized = false;
 // Where the tiles are (map_tiles_refresh_availability -> tile_manager_set_tile_source). Changed only while the
 // tile cache is down (no decode task runs), so the decode tasks read these without a lock.
 static bool core_pak_ready = false;           // s_core_index describes TILE_PAK_PATH on that filesystem
-static bool core_pak_on_sd = false;           // the core pack is on the SD card (else in LittleFS)
-static uint8_t max_tile_level = 4;            // 5/6 when the SD card has hand-copied detail tiles
-static tile_pak::Index s_core_index;          // z1-z4 tile offsets in the core pack
+static bool core_pak_on_sd = false;           // the map pack is on the SD card (else in LittleFS)
+static uint8_t core_pak_levels = 0;           // highest level in the pack (4..6), 0 without a pack
+static uint8_t max_tile_level = 4;            // the pack's highest level, or 5/6 from loose detail tiles on the SD card
+// Tile offsets in the map pack: one PSRAM block (43.7 KB), allocated at the first pack and never freed or moved,
+// because the decode tasks read it without a lock.
+static tile_pak::Index* s_core_index = nullptr;
 
 // --- Tile Cache ---
 static TileCache g_tile_cache;
@@ -51,19 +54,35 @@ extern float view_center_lon;
 static uint32_t decode_time_sum[7] = {0};  // z0-z6
 static uint32_t decode_count[7] = {0};
 
-bool tile_manager_set_tile_source(const tile_pak::Index* core, bool core_on_sd, uint8_t max_level) {
+bool tile_manager_set_tile_source(const tile_pak::Index* core, bool core_on_sd, uint8_t sd_detail_level) {
     // The decode tasks read the source without a lock: it may only change while they are not running.
     if (cache_initialized) {
         Serial.println("[TILE] Tile source unchanged: the tile cache is in use");
         return false;
     }
+    // Only a fully parsed index (levels set by tile_pak::parse) may become the source.
+    if (core && (core->levels < tile_pak::kMinLevels || core->levels > tile_pak::kMaxLevels)) {
+        Serial.println("[TILE] Tile source unchanged: the pack index is not valid");
+        return false;
+    }
+    if (core && !s_core_index) {
+        s_core_index = tile_pak_alloc_index();
+        if (!s_core_index) {
+            Serial.println("[TILE] Tile source unchanged: no memory for the pack index");
+            return false;
+        }
+    }
+    core_pak_ready = false;  // nothing reads the index while it is replaced (no decode task runs here)
+    if (core) memcpy(s_core_index, core, sizeof(*core));
+    core_pak_levels = core ? core->levels : 0;
+    core_pak_on_sd = core != nullptr && core_on_sd;
+    // Loose SD detail tiles only add levels above the pack's own.
+    max_tile_level = !core ? 4 : (sd_detail_level > core_pak_levels ? sd_detail_level : core_pak_levels);
+    if (max_tile_level > tile_pak::kMaxLevels) max_tile_level = tile_pak::kMaxLevels;
     core_pak_ready = core != nullptr;
-    if (core) s_core_index = *core;
-    core_pak_on_sd = core_pak_ready && core_on_sd;
-    max_tile_level = core_pak_ready ? max_level : 4;
-    Serial.printf("[TILE] Tile source: %s, highest level z%u\n",
-                  !core_pak_ready ? "none" : (core_on_sd ? "core pack on the SD card" : "core pack in flash"),
-                  (unsigned)max_tile_level);
+    Serial.printf("[TILE] Tile source: %s (z1-z%u), highest level z%u\n",
+                  !core_pak_ready ? "none" : (core_on_sd ? "map pack on the SD card" : "map pack in flash"),
+                  (unsigned)core_pak_levels, (unsigned)max_tile_level);
     return true;
 }
 
@@ -567,9 +586,15 @@ struct DecodedTile {
     lv_image_dsc_t dsc;
 };
 
-// Reads one tile's QOI bytes into buf: z1-z4 from the core pack (one open, seek, read), z5/z6 from the SD card's
-// detail files (/GeoQuakeLite/tiles/z{z}/{x}/{y}.qoi). The filesystem lock is held only for the open/read/close; the
-// source is read once here (it only changes while no decode task runs, see tile_manager_set_tile_source).
+// True when the map pack holds this tile's level; the levels above it come from loose files on the SD card.
+static bool tile_is_in_pack(TileCoord coord) {
+    return coord.z >= 1 && coord.z <= core_pak_levels;
+}
+
+// Reads one tile's QOI bytes into buf: every level the map pack has from the pack (one open, seek, read), levels
+// above it from the SD card's loose detail files (/GeoQuakeLite/tiles/z{z}/{x}/{y}.qoi). The filesystem lock is
+// held only for the open/read/close; the source is read once here (it only changes while no decode task runs, see
+// tile_manager_set_tile_source).
 static bool read_tile_bytes(TileCoord coord, uint8_t* buf, size_t buf_size, size_t* out_size, bool* from_sd) {
     *out_size = 0;
     if (!core_pak_ready || coord.z > max_tile_level) return false;
@@ -577,11 +602,12 @@ static bool read_tile_bytes(TileCoord coord, uint8_t* buf, size_t buf_size, size
     uint32_t offset = 0;
     size_t length = 0;
     bool on_sd = true;
-    if (coord.z <= 4) {
-        const int slot = tile_pak::tile_slot(coord.z, coord.x, coord.y);
+    const bool in_pack = tile_is_in_pack(coord);
+    if (in_pack) {
+        const int slot = tile_pak::tile_slot(coord.z, coord.x, coord.y, core_pak_levels);
         if (slot < 0) return false;
-        offset = s_core_index.entry[slot].offset;
-        length = s_core_index.entry[slot].length;
+        offset = s_core_index->entry[slot].offset;
+        length = s_core_index->entry[slot].length;
         on_sd = core_pak_on_sd;
         snprintf(path, sizeof(path), "%s", TILE_PAK_PATH);
     } else {
@@ -601,8 +627,8 @@ static bool read_tile_bytes(TileCoord coord, uint8_t* buf, size_t buf_size, size
     File file = on_sd ? SD.open(path, FILE_READ) : LittleFS.open(path, FILE_READ);
     bool ok = false;
     if (file) {
-        if (coord.z > 4) length = file.size();
-        if (length > 0 && length <= buf_size && (coord.z > 4 || file.seek(offset))) {
+        if (!in_pack) length = file.size();  // a loose file is one whole tile
+        if (length > 0 && length <= buf_size && (!in_pack || file.seek(offset))) {
             ok = file.read(buf, length) == length;
         }
         file.close();
@@ -1434,7 +1460,7 @@ static bool load_tile_to_slot(TileCoord coord, int slot, int task_id, uint32_t c
     } else {
         tile_publish_locked(t);
     }
-    if (coord.z <= 4) {
+    if (tile_is_in_pack(coord)) {
         snprintf(t->path, sizeof(t->path), "%s:z%d/%d_%d", core_pak_on_sd ? "S:core.pak" : "F:core.pak",
                  coord.z, coord.x, coord.y);
     } else {

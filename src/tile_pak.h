@@ -1,11 +1,10 @@
 #pragma once
 
-// The core map pack on storage (format: tile_pak_format.h). GeoQuake keeps the 340 z1-z4 tiles as ONE file,
-// TILE_PAK_PATH, on the SD card or in LittleFS (one file instead of 340 saves ~0.9 MB, because LittleFS gives
-// every file at least one 4 KB block).
+// The map pack on storage (format: tile_pak_format.h). GeoQuake Lite keeps the tiles of z1..z4, z1..z5 or z1..z6 as
+// ONE file, TILE_PAK_PATH, in LittleFS or on the SD card (one file instead of thousands: LittleFS gives every file
+// at least one 4 KB block).
 //
-// tile_pak_load_index expects the caller to hold that filesystem's lock (sd_lock / flash_lock); the others take it
-// per call through the given callbacks.
+// tile_pak_load_index expects the caller to hold that filesystem's lock (sd_lock / flash_lock).
 
 #include <FS.h>
 #include "tile_pak_format.h"
@@ -14,11 +13,12 @@
 #define TILE_PAK_PART_PATH "/GeoQuakeLite/tiles/core.pak.part"
 #define TILE_PAK_DIR "/GeoQuakeLite/tiles"
 
-// Header and TOC of the pack at `path` (size, structure, bounds): fills *out. Cheap (one 4 KB read): used at start.
-bool tile_pak_load_index(fs::FS& fs, const char* path, tile_pak::Index* out);
+// A zeroed index in PSRAM (43.7 KB), nullptr when there is none to spare. Release it with tile_pak_free_index.
+// The index never goes on a task stack or into static data: internal RAM is the scarce resource.
+tile_pak::Index* tile_pak_alloc_index();
+void tile_pak_free_index(tile_pak::Index* index);
 
-// Every distinct payload of an already loaded index decodes completely as a 256x256 QOI image (qoi_decoder.h, the
-// decoder the map uses). Run once on a downloaded pack before it is published. lock/unlock wrap each tile read
-// (lock() returning false ends the check: not valid); decoding runs unlocked. Uses 64 KB + 128 KB of PSRAM.
-bool tile_pak_check_payloads(fs::FS& fs, const char* path, const tile_pak::Index& index, bool (*lock)(),
-                             void (*unlock)());
+// Header and TOC of the pack at `path` (size, structure, bounds): fills *out, whose `levels` then tells the pack's
+// highest level. Reads the 16-byte header, then the TOC it announces (4 KB for four levels, 64 KB for six) into a
+// temporary PSRAM buffer. Used at start; the tiles themselves are decoded in the host tests, not here.
+bool tile_pak_load_index(fs::FS& fs, const char* path, tile_pak::Index* out);

@@ -8,6 +8,11 @@
 // Default zoom level mapping
 static const float DEFAULT_ZOOM_FOR_LEVEL[] = {0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
 
+float map_zoom_for_tile_level(uint8_t z) {
+    const uint8_t top = sizeof(DEFAULT_ZOOM_FOR_LEVEL) / sizeof(DEFAULT_ZOOM_FOR_LEVEL[0]) - 1;
+    return DEFAULT_ZOOM_FOR_LEVEL[z > top ? top : z];
+}
+
 // External state - some from map_renderer.cpp, some from map_tiles.cpp (via map_tiles.h)
 extern bool is_panning;
 extern float pinch_start_distance;

@@ -68,10 +68,12 @@ typedef struct {
 // Initialize tile manager
 void tile_manager_init();
 
-// Select where the tiles are: the core pack's index (z1-z4, nullptr = no tiles), whether that pack is on the SD card
-// (else on the LittleFS), and the highest level (4, or 5/6 with the SD card's detail tiles). Refused (false)
-// while the tile cache is initialized: the decode tasks read the source without a lock.
-bool tile_manager_set_tile_source(const tile_pak::Index* core, bool core_on_sd, uint8_t max_level);
+// Select where the tiles are: the map pack's parsed index (nullptr = no tiles; it is copied, the caller keeps its
+// own), whether that pack is on the SD card (else in LittleFS), and the level of loose detail tiles on the SD card
+// (4 = none). The highest level is the pack's own, or the SD detail level when that is higher. Refused (false, the
+// source stays as it was) while the tile cache is initialized, because the decode tasks read the source without a
+// lock, and when the index is not a parsed one or there is no memory for the copy.
+bool tile_manager_set_tile_source(const tile_pak::Index* core, bool core_on_sd, uint8_t sd_detail_level);
 bool tile_manager_using_flash_fallback();  // the core pack is in flash (no SD card copy)
 uint8_t tile_manager_get_max_tile_level();
 

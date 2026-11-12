@@ -41,6 +41,12 @@ jobs:
       - name: Build LittleFS image
         run: pio run -e geoquake_lite -t buildfs
 
+      - name: Run packer tests
+        run: python3 tools/tile_generator/test_pack_core_tiles.py
+
+      - name: Check the release files
+        run: python3 tools/check_release.py --require-build
+
       - name: Build third-party notices
         run: python3 tools/notices/build_notices.py
 
@@ -79,6 +85,9 @@ jobs:
       - name: Build LittleFS image
         run: pio run -e geoquake_lite -t buildfs
 
+      - name: Check the release files
+        run: python3 tools/check_release.py --require-build --tag "${GITHUB_REF_NAME}"
+
       - name: Build third-party notices
         run: python3 tools/notices/build_notices.py
 
@@ -87,13 +96,18 @@ jobs:
 
       - name: Copy images and notices for the installer
         run: |
-          mkdir -p docs/firmware docs/licenses
-          cp .pio/build/geoquake_lite/bootloader.bin docs/firmware/
-          cp .pio/build/geoquake_lite/partitions.bin docs/firmware/
-          cp .pio/build/geoquake_lite/firmware.bin docs/firmware/
-          cp .pio/build/geoquake_lite/littlefs.bin docs/firmware/
+          # Each release has its own image folder (docs/manifest.json names it), so a browser
+          # can never mix cached images of two releases.
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          mkdir -p "docs/firmware/${VERSION}" docs/licenses
+          cp .pio/build/geoquake_lite/bootloader.bin "docs/firmware/${VERSION}/"
+          cp .pio/build/geoquake_lite/partitions.bin "docs/firmware/${VERSION}/"
+          cp .pio/build/geoquake_lite/firmware.bin "docs/firmware/${VERSION}/"
+          cp .pio/build/geoquake_lite/littlefs.bin "docs/firmware/${VERSION}/"
           cp LICENSE THIRD_PARTY_NOTICES.md docs/
           cp licenses/THIRD_PARTY_LICENSES.txt docs/licenses/
+          python3 tools/check_release.py --require-build --tag "${GITHUB_REF_NAME}" --site docs
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -104,10 +118,10 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
-            docs/firmware/bootloader.bin
-            docs/firmware/partitions.bin
-            docs/firmware/firmware.bin
-            docs/firmware/littlefs.bin
+            docs/firmware/${{ env.VERSION }}/bootloader.bin
+            docs/firmware/${{ env.VERSION }}/partitions.bin
+            docs/firmware/${{ env.VERSION }}/firmware.bin
+            docs/firmware/${{ env.VERSION }}/littlefs.bin
             LICENSE
             THIRD_PARTY_NOTICES.md
             licenses/THIRD_PARTY_LICENSES.txt

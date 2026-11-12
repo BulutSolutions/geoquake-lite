@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/c72df763-f46e-419e-ac80-ba9484ac7dbf
 ## What it does
 
 - Shows the latest earthquakes worldwide from the USGS live feed (the newest 100), checking every 5 to 30 minutes.
-- Pinch to zoom, drag to pan. The world map (Natural Earth) is built into the firmware: nothing to download.
+- Pinch to zoom from the whole world (1x) up to 32x in six steps, and drag to pan. The Natural Earth map is built into the firmware, so nothing is downloaded.
 - A quake list with magnitude, place, depth and time; tap a dot on the map for its details.
 - Minimum magnitude filter, sound alerts, brightness, night dimming and time zone in Settings.
 - Talks only to the USGS feed and public time servers: no account, no server of ours, no tracking.

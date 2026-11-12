@@ -31,7 +31,9 @@ LV_FONT_DECLARE(lv_font_montserrat_18);
 static bool notification_mode = false;
 static lv_obj_t* notification_panel = NULL;
 static std::vector<Earthquake> panel_quakes;  // Thread-safe snapshot for zoom callbacks
-static constexpr float EARTHQUAKE_FOCUS_VIEW_ZOOM = MAX_ZOOM_LEVEL;
+static constexpr float EARTHQUAKE_FOCUS_VIEW_ZOOM = MAX_ZOOM_LEVEL;  // vector mode (no map pack)
+// Tile mode: 8x shows the quake with the region around it. The map itself zooms further (to z6) by pinching.
+static constexpr uint8_t EARTHQUAKE_FOCUS_TILE_LEVEL = 4;
 
 // Forward declarations
 static void close_notification_panel();
@@ -276,9 +278,16 @@ static void earthquake_zoom_cb(lv_event_t* e) {
     if (idx < 0 || idx >= (int)panel_quakes.size()) return;
 
     const Earthquake& q = panel_quakes[idx];
-    // Use the active source's highest tile level, capped to z4 for flash fallback.
-    map_tiles_set_zoom_level(tile_manager_get_max_tile_level());
-    map_set_view(q.lat, q.lon, EARTHQUAKE_FOCUS_VIEW_ZOOM);
+    const uint8_t top = tile_manager_get_max_tile_level();
+    if (use_tile_mode && tiles_available) {
+        // The tile level and the zoom shown for it change together (the zoom label reads the view zoom).
+        const uint8_t level = top < EARTHQUAKE_FOCUS_TILE_LEVEL ? top : EARTHQUAKE_FOCUS_TILE_LEVEL;
+        map_tiles_set_zoom_level(level);
+        map_set_view(q.lat, q.lon, map_zoom_for_tile_level(level));
+    } else {
+        map_tiles_set_zoom_level(top);
+        map_set_view(q.lat, q.lon, EARTHQUAKE_FOCUS_VIEW_ZOOM);
+    }
     close_notification_panel();
 }
 

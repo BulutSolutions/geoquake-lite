@@ -22,6 +22,10 @@ void map_on_pinch_begin(float distance, int16_t mid_x, int16_t mid_y);
 void map_on_pinch_update(float distance, int16_t mid_x, int16_t mid_y);
 void map_on_pinch_end(void);
 
+// --- ZOOM ---
+// The view zoom that belongs to a tile level: 1x at z1, doubling up to 32x at z6.
+float map_zoom_for_tile_level(uint8_t z);
+
 // --- STATE QUERIES ---
 bool map_is_panning(void);
 bool map_is_pinching(void);
