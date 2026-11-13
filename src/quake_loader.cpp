@@ -8,6 +8,7 @@
 #include "wifi_manager.h"
 #include "usgs_parse.h"
 #include "usgs_root_ca.h"
+#include "hande_time.h"
 #include <HTTPClient.h>
 #include "hande_tls_client.h"
 #include <ArduinoJson.h>
@@ -56,12 +57,14 @@ static std::atomic<QuakeFetchResult> last_fetch_result{FETCH_SUCCESS};  // writt
 QuakeFetchResult quake_last_fetch_result() { return last_fetch_result.load(); }
 void quake_note_connect_failed() { last_fetch_result = FETCH_WIFI_ERROR; }
 
+// Internal heap now, its largest block and its lowest ever, plus the least stack this task (the worker) ever had left.
 static void log_quake_heap(const char* label) {
-    Serial.printf("[QUAKE] Heap %s: free=%u KB largest=%u KB min=%u KB\n",
+    Serial.printf("[QUAKE] Heap %s: free=%u KB largest=%u KB min=%u KB stack_left=%u B\n",
                   label,
                   static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                   static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
-                  static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
+                  static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
 }
 
 void init_quake_loader() {
@@ -402,6 +405,16 @@ static void task_fetch_quakes_worker() {
 
 
     log_quake_heap("after HTTP cleanup");
+
+    // The time zone, when due (once per boot, then every 6 h; never when the user picked one in Settings). Here
+    // because this task does the firmware's HTTPS: the earthquake connection is closed (two TLS connections at once
+    // do not fit in memory), the lookup ends inside the same deadline, and no other fetch starts while
+    // is_fetching_quakes is set.
+    if (hande_time_zone_lookup_due()) {
+        hande_time_lookup_zone(fetch_deadline_ms);
+        log_quake_heap("after the time-zone lookup");
+    }
+
     is_fetching_quakes = false;
     ui_queue_status_text("restore");  // the type: put the "40/24h" summary back (not the word itself)
     if (notification_audio_count > 0) {
@@ -409,6 +422,11 @@ static void task_fetch_quakes_worker() {
         pending_notification_audio_count.store(notification_audio_count);
     }
 }
+
+// The worker's stack. Measured on the board (2026-11-12, least stack ever left, printed by log_quake_heap): the USGS
+// download (an RSA chain) uses 4.7 KB; the time-zone lookup's TLS handshake (an ECDSA P-384 chain) 6.3 KB. With 8 KB
+// that left 1.9 KB, so the stack grew by 2 KB to keep the margin the download alone had.
+static constexpr uint32_t kQuakeTaskStackBytes = 10240;
 
 static void task_fetch_quakes(void* param) {
     task_fetch_quakes_worker();
@@ -434,7 +452,8 @@ void quake_dispatch_pending_audio() {
 void fetch_quakes() {
     bool expected = false;
     if (is_fetching_quakes.compare_exchange_strong(expected, true)) {
-        if (xTaskCreatePinnedToCore(task_fetch_quakes, "QuakeTask", 8192, NULL, tskIDLE_PRIORITY, NULL, 0) != pdPASS) {
+        if (xTaskCreatePinnedToCore(task_fetch_quakes, "QuakeTask", kQuakeTaskStackBytes, NULL, tskIDLE_PRIORITY, NULL,
+                                    0) != pdPASS) {
             last_fetch_result = FETCH_WIFI_ERROR;  // the status bar shows Sync failed instead of a stuck Syncing...
             is_fetching_quakes = false;
         }
@@ -460,7 +479,8 @@ QuakeFetchResult fetch_quakes_with_result() {
     }
 
     last_fetch_result = FETCH_WIFI_ERROR;
-    if (xTaskCreatePinnedToCore(task_fetch_quakes, "QuakeTask", 8192, NULL, tskIDLE_PRIORITY, NULL, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(task_fetch_quakes, "QuakeTask", kQuakeTaskStackBytes, NULL, tskIDLE_PRIORITY, NULL,
+                                0) != pdPASS) {
         is_fetching_quakes = false;
         return FETCH_WIFI_ERROR;
     }

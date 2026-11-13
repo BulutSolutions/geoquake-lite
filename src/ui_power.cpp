@@ -200,10 +200,8 @@ void ui_check_deferred_saves() {
         auto_dim_save_pending = false;
         last_save_time = now;
     }
-
-    // Check settings deferred saves (brightness slider)
-    extern void ui_settings_check_deferred_saves();
-    ui_settings_check_deferred_saves();
+    // The settings' own deferred save runs in the screen task only (main.cpp): every writer of that NVS namespace
+    // is there, so two saves can never overlap.
 }
 
 // --- Private Implementation ---

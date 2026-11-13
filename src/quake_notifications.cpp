@@ -1,30 +1,47 @@
 #include "quake_notifications.h"
+#include "quake_seen_policy.h"
+#include <esp_heap_caps.h>
 #include <string.h>
 
-static std::vector<QuakeNotification> notifications;
+static std::vector<QuakeNotification> notifications;  // the newest alerted earthquakes, newest first
+static quake_seen_policy::Seen* s_seen = nullptr;     // ids already alerted (7.2 KB, in PSRAM)
 static bool initialized = false;
 static const int kMaxNotifications = 10;
+
+static_assert(quake_seen_policy::kIdLen == sizeof(Earthquake::id), "the remembered ids hold a whole earthquake id");
+static_assert(quake_seen_policy::kCapacity >= 2 * MAX_STORED_QUAKES, "an id still in the feed must not be given up");
+
+// The memory of alerted ids. True when it was obtained by this call (it is empty then).
+static bool obtain_seen() {
+    if (s_seen) return false;
+    s_seen = static_cast<quake_seen_policy::Seen*>(
+        heap_caps_calloc(1, sizeof(quake_seen_policy::Seen), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!s_seen) s_seen = static_cast<quake_seen_policy::Seen*>(calloc(1, sizeof(quake_seen_policy::Seen)));
+    return s_seen != nullptr;
+}
 
 void quake_notifs_init() {
     if (initialized) return;
     notifications.reserve(kMaxNotifications);
+    obtain_seen();
     initialized = true;
 }
 
-static bool has_id(const char* id) {
-    if (!id || !id[0]) return false;
-    for (const auto& n : notifications) {
-        if (strncmp(n.id, id, sizeof(n.id)) == 0) return true;
-    }
-    return false;
-}
-
+// Returns how many earthquakes of this refresh are new: they pass the filter and were not alerted before. The list
+// used to remember only its 10 entries, so with more than 10 earthquakes over the filter every refresh counted the
+// rest as new again and the alert sound played each time.
 int quake_notifs_add_from_list(const std::vector<Earthquake>& quakes, float min_mag) {
     quake_notifs_init();
+    // No memory for the ids at start (it is asked for again on every refresh): no alert rather than one on every
+    // refresh. The refresh that gets the memory only fills it: everything in the feed would count as new.
+    const bool only_fill = obtain_seen();
+    if (!s_seen) return 0;
+    quake_seen_policy::begin_refresh(*s_seen);
     int added = 0;
-    for (const auto& q : quakes) {
-        if (q.mag < min_mag) continue;
-        if (has_id(q.id)) continue;
+    // The feed is newest first; walked from its oldest, the newest is inserted last and ends at the list's front.
+    for (auto it = quakes.rbegin(); it != quakes.rend(); ++it) {
+        const Earthquake& q = *it;
+        if (!quake_seen_policy::note(*s_seen, q.id, q.mag, min_mag)) continue;
 
         QuakeNotification n = {};
         strncpy(n.id, q.id, sizeof(n.id) - 1);
@@ -41,7 +58,7 @@ int quake_notifs_add_from_list(const std::vector<Earthquake>& quakes, float min_
             notifications.pop_back();
         }
     }
-    return added;
+    return only_fill ? 0 : added;
 }
 
 int quake_notifs_count() {

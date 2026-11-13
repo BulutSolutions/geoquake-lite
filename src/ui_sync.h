@@ -194,6 +194,12 @@ void ui_queue_reload_earthquakes();
  */
 void ui_queue_manual_refresh();
 
+/**
+ * The same, for a request that must reach the network (the time-zone switch in Settings): when a refresh is
+ * already running, one more runs right after it instead of the request being dropped.
+ */
+void ui_queue_manual_refresh_kept();
+
 // ============================================================================
 // AUTO-HIDE THREAD-SAFE QUEUE FUNCTIONS
 // ============================================================================

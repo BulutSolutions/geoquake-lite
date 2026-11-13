@@ -29,6 +29,16 @@ static TaskHandle_t mutex_owner = NULL;
 // Re-entrancy gate - prevents multiple simultaneous manual refreshes
 // Using std::atomic for proper thread-safe check-and-set across cores
 static std::atomic<bool> manual_refresh_in_progress{false};
+// A refresh that must not be lost (ui_queue_manual_refresh_kept) could not start: one was running, the event queue
+// was full or its task could not be created. It stays pending here and ui_process_queue() starts it, not before
+// the given time (a failed task creation is tried again after 5 s).
+static std::atomic<bool> manual_refresh_again{false};
+static std::atomic<uint32_t> manual_refresh_again_from_ms{0};
+
+static void keep_manual_refresh(uint32_t wait_ms) {
+    manual_refresh_again_from_ms.store(millis() + wait_ms);
+    manual_refresh_again.store(true);
+}
 
 // ============================================================================
 // MUTEX IMPLEMENTATION
@@ -164,8 +174,50 @@ static void reload_earthquakes_task(void* param) {
     vTaskDelete(NULL);
 }
 
+// LVGL task. Starts the manual refresh task. A kept request that cannot start now stays pending.
+static void start_manual_refresh(bool kept) {
+    // Gate: atomic check-and-set prevents multiple simultaneous refreshes
+    if (manual_refresh_in_progress.exchange(true)) {
+        if (kept) {
+            keep_manual_refresh(0);
+            Serial.println("[UI_SYNC] Refresh already in progress, one more follows");
+        } else {
+            Serial.println("[UI_SYNC] Refresh already in progress, ignoring");
+        }
+        return;
+    }
+
+    Serial.println("[UI_SYNC] Manual refresh triggered - spawning background task");
+
+    // Show "Connecting..." immediately (renders next frame)
+    ui_update_status_text("connecting");
+
+    // Spawn background task on Core 0 (doesn't block LVGL on Core 1)
+    if (xTaskCreatePinnedToCore(
+        manual_refresh_task,   // Task function
+        "ManualRefresh",       // Task name
+        8192,                  // Stack size (WiFi + HTTP needs space)
+        NULL,                  // No parameters
+        1,                     // Priority
+        NULL,                  // Don't need handle
+        0                      // Core 0 (background/networking)
+    ) != pdPASS) {
+        Serial.println("[UI_SYNC] ERROR: Could not create refresh task!");
+        ui_update_status_text("restore");
+        manual_refresh_in_progress.store(false);
+        if (kept) keep_manual_refresh(5000);
+    }
+}
+
 void ui_process_queue() {
     if (!ui_event_queue) return;
+
+    // A kept refresh that could not start earlier: start it as soon as no other refresh runs.
+    if (manual_refresh_again.load() && !manual_refresh_in_progress.load() &&
+        static_cast<int32_t>(millis() - manual_refresh_again_from_ms.load()) >= 0) {
+        manual_refresh_again.store(false);
+        start_manual_refresh(true);
+    }
 
     UI_Event evt;
 
@@ -249,34 +301,8 @@ void ui_process_queue() {
                 break;
 
             case UI_EVT_MANUAL_REFRESH:
-                // Manual refresh from sync button - spawn async task
-                {
-                    // Gate: atomic check-and-set prevents multiple simultaneous refreshes
-                    if (manual_refresh_in_progress.exchange(true)) {
-                        Serial.println("[UI_SYNC] Refresh already in progress, ignoring");
-                        break;
-                    }
-
-                    Serial.println("[UI_SYNC] Manual refresh triggered - spawning background task");
-
-                    // Show "Connecting..." immediately (renders next frame)
-                    ui_update_status_text("connecting");
-
-                    // Spawn background task on Core 0 (doesn't block LVGL on Core 1)
-                    if (xTaskCreatePinnedToCore(
-                        manual_refresh_task,   // Task function
-                        "ManualRefresh",       // Task name
-                        8192,                  // Stack size (WiFi + HTTP needs space)
-                        NULL,                  // No parameters
-                        1,                     // Priority
-                        NULL,                  // Don't need handle
-                        0                      // Core 0 (background/networking)
-                    ) != pdPASS) {
-                        Serial.println("[UI_SYNC] ERROR: Could not create refresh task!");
-                        ui_update_status_text("restore");
-                        manual_refresh_in_progress.store(false);
-                    }
-                }
+                // Manual refresh from the sync button, or a kept one (value 1) from Settings
+                start_manual_refresh(evt.value == 1);
                 break;
 
             case UI_EVT_STATUS_TEXT:
@@ -344,6 +370,10 @@ void ui_queue_reload_earthquakes() {
 
 void ui_queue_manual_refresh() {
     queue_event(UI_EVT_MANUAL_REFRESH, NULL, 0);
+}
+
+void ui_queue_manual_refresh_kept() {
+    if (!queue_event(UI_EVT_MANUAL_REFRESH, NULL, 1)) keep_manual_refresh(0);  // queue full: still not lost
 }
 
 // ============================================================================

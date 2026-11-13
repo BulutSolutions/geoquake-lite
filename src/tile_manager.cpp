@@ -1790,12 +1790,58 @@ void tile_cache_release(CachedTile* tile) {
     cache_unlock();
 }
 
+// True when coord is a tile of the view centred on `center`: the 3x3 around it (x wraps), every tile at z1.
+static bool tile_in_view(TileCoord coord, TileCoord center) {
+    if (coord.z != center.z) return false;
+    if (center.z == 1) return true;
+    const int n = 1 << center.z;
+    int dx = (int)coord.x - (int)center.x;
+    if (dx > n / 2) dx -= n;
+    if (dx < -n / 2) dx += n;
+    const int dy = (int)coord.y - (int)center.y;
+    return dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1;
+}
+
+// Keeps, in one of the two request queues, only the requests for tiles of the view at `center`.
+static void keep_requests_of_view(TileCoord* queue, uint8_t head, uint8_t* tail, uint8_t size, TileCoord center) {
+    uint8_t out = head;
+    for (uint8_t i = head; i != *tail; i = (i + 1) % size) {
+        if (tile_in_view(queue[i], center)) {
+            queue[out] = queue[i];
+            out = (out + 1) % size;
+        }
+    }
+    *tail = out;
+}
+
+// One tile of the view being preloaded (cache lock held): into the VISIBLE queue while the cache has room. At its
+// adaptive limit a visible request evicts the least recently used tile, which can be a tile of this same view: that
+// choice stays where it was, with the renderer's own request for a tile it is about to draw.
+static void queue_view_tile_locked(TileCoord coord) {
+    if (tile_cache_can_load_more()) queue_tile_load_priority(coord, true);
+}
+
+// Queues the tiles of the view at (z, centre): the nine on screen, centre first, in the VISIBLE queue, so decoder 0
+// loads them in that order. (As prefetch, the idle-priority decoder could claim one, usually the centre, and,
+// preempted by decoder 0 for the other eight, deliver it last.) A call is a new view: visible requests still queued
+// for tiles outside it are dropped first, so a second call in a row (zoom level, then position) leaves only the last
+// view's tiles and the queue cannot overflow. Requests for tiles of this view stay queued (the renderer made them
+// and does not repeat them on its own).
 void tile_cache_preload(uint8_t z, float center_lat, float center_lon) {
     if (!cache_initialized) tile_cache_init();
 
     TileCoord center = latlon_to_tile(center_lat, center_lon, z);
 
     if (!cache_try_lock(2500)) return;
+
+    keep_requests_of_view(visible_queue, visible_queue_head, &visible_queue_tail, VISIBLE_QUEUE_SIZE, center);
+    // The misses the renderer parked while the cache lock was busy: the same rule. Skipped when the renderer holds
+    // that queue right now (they are then handled as before, when a decoder drains them).
+    if (deferred_visible_mutex && xSemaphoreTake(deferred_visible_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        keep_requests_of_view(deferred_visible_queue, deferred_visible_head, &deferred_visible_tail,
+                              DEFERRED_VISIBLE_QUEUE_SIZE, center);
+        xSemaphoreGive(deferred_visible_mutex);
+    }
 
     if (z == 1) {
         // Z1: exactly 4 tiles cover the whole world (0_0, 1_0, 0_1, 1_1)
@@ -1805,7 +1851,7 @@ void tile_cache_preload(uint8_t z, float center_lat, float center_lon) {
                 tc.z = 1;
                 tc.x = tx;
                 tc.y = ty;
-                queue_tile_load_locked(tc);
+                queue_view_tile_locked(tc);
             }
         }
     } else {
@@ -1845,7 +1891,7 @@ void tile_cache_preload(uint8_t z, float center_lat, float center_lon) {
             tc.y = (uint16_t)ty;
 
             // Queue if not already cached
-            queue_tile_load_locked(tc);
+            queue_view_tile_locked(tc);
         }
     }
 

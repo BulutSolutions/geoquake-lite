@@ -13,8 +13,8 @@ https://github.com/user-attachments/assets/c72df763-f46e-419e-ac80-ba9484ac7dbf
 - Shows the latest earthquakes worldwide from the USGS live feed (the newest 100), checking every 5 to 30 minutes.
 - Pinch to zoom from the whole world (1x) up to 32x in six steps, and drag to pan. The Natural Earth map is built into the firmware, so nothing is downloaded.
 - A quake list with magnitude, place, depth and time; tap a dot on the map for its details.
-- Minimum magnitude filter, sound alerts, brightness, night dimming and time zone in Settings.
-- Talks only to the USGS feed and public time servers: no account, no server of ours, no tracking.
+- Sets its clock and time zone automatically from the internet. Minimum magnitude filter, sound alerts, brightness and night dimming are in Settings.
+- Talks only to the USGS feed, public time servers and api.handeos.com, which tells it your time zone from your IP address (after startup, then about every 6 hours, during an earthquake refresh). That request sends only the app name and version, and you can switch it off under Settings > Clock & HUD > Time zone. No account, and the app sends nothing that identifies you or the board.
 
 ## What you need
 

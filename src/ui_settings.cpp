@@ -657,8 +657,10 @@ const HandeSettingsRow kBrightnessRows[] = {
 };
 const HandeSettingsRow kNightRows[] = {
     hande_row_toggle("Dim at night", get_night, set_night),
-    hande_row_when(hande_row_stepper("Starts", 0, 23, 1, get_night_start, set_night_start, hour_text), get_night),
-    hande_row_when(hande_row_stepper("Ends", 0, 23, 1, get_night_end, set_night_end, hour_text), get_night),
+    // Hours go round: + at 23:00 gives 00:00, - at 00:00 gives 23:00.
+    hande_row_when(hande_row_stepper("Starts", 0, 23, 1, get_night_start, set_night_start, hour_text, true),
+                   get_night),
+    hande_row_when(hande_row_stepper("Ends", 0, 23, 1, get_night_end, set_night_end, hour_text, true), get_night),
 };
 const HandeSettingsRow kSleepRows[] = {
     hande_row_choice("Screen off after", kTimeoutLabels, 3, get_screen_timeout, set_screen_timeout),
@@ -670,8 +672,20 @@ const HandeSettingsSection kDisplaySections[] = {
 };
 const HandeSettingsPage kDisplayPage = {"Display", kDisplaySections, 3};
 
+// "Set automatically": the zone comes from the internet (hande_time's lookup). Off: the pickers appear and the
+// zone in use stays until another one is set.
+bool get_tz_auto() { return hande_time_zone_automatic(); }
+void set_tz_auto(bool on) {
+    hande_time_set_zone_automatic(on);
+    Serial.printf("[SETTINGS] Time zone: set automatically %s\n", on ? "on" : "off");
+    if (on) ui_queue_manual_refresh_kept();  // go online now: the lookup follows the earthquake download
+}
+bool tz_manual() { return !hande_time_zone_automatic(); }
+
 const HandeSettingsRow kTzRows[] = {
-    hande_row_custom("Time zone", build_tz_card),
+    hande_row_toggle("Set automatically", get_tz_auto, set_tz_auto, "From your internet connection"),
+    hande_row_when(hande_row_info("Zone", tz_text), get_tz_auto),
+    hande_row_when(hande_row_custom("Time zone", build_tz_card), tz_manual),
 };
 const HandeSettingsSection kTzSections[] = {
     {nullptr, kTzRows, sizeof(kTzRows) / sizeof(kTzRows[0])},

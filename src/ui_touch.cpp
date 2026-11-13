@@ -307,6 +307,9 @@ static void on_sample(const HandeTouchSample& s, HandeTouchLvglInput& lvgl) {
         if (is_single_touch_panning || is_pinching) {
             ui_touch_end_gestures();
         }
+        // A touch on a panel (Settings, the quake list) is use of the device too: the screen-off timer, which
+        // stands still while a panel is open, counts from the last touch there, not from the last one on the map.
+        last_touch_millis = now;
         lvgl.pressed = true;
         last_touch_state = true;
         return;

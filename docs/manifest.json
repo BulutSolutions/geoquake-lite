@@ -1,15 +1,15 @@
 {
   "name": "GeoQuake Lite",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "new_install_prompt_erase": false,
   "builds": [
     {
       "chipFamily": "ESP32-S3",
       "parts": [
-        { "path": "firmware/1.0.2/bootloader.bin", "offset": 0 },
-        { "path": "firmware/1.0.2/partitions.bin", "offset": 32768 },
-        { "path": "firmware/1.0.2/firmware.bin", "offset": 65536 },
-        { "path": "firmware/1.0.2/littlefs.bin", "offset": 4259840 }
+        { "path": "firmware/1.0.3/bootloader.bin", "offset": 0 },
+        { "path": "firmware/1.0.3/partitions.bin", "offset": 32768 },
+        { "path": "firmware/1.0.3/firmware.bin", "offset": 65536 },
+        { "path": "firmware/1.0.3/littlefs.bin", "offset": 4259840 }
       ]
     }
   ]

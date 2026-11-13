@@ -8,10 +8,10 @@
 
 #define FIRMWARE_VERSION_MAJOR 1
 #define FIRMWARE_VERSION_MINOR 0
-#define FIRMWARE_VERSION_PATCH 2
+#define FIRMWARE_VERSION_PATCH 3
 
 // Version string for display (e.g., "1.0.0")
-#define FIRMWARE_VERSION_STRING "1.0.2"
+#define FIRMWARE_VERSION_STRING "1.0.3"
 
 // Build number - increment with each build (optional, for tracking)
 #define FIRMWARE_BUILD_NUMBER 1

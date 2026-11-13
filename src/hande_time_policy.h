@@ -2,7 +2,7 @@
 
 // Pure rules of the time service (hande_time.cpp), no Arduino: host-tested on the host.
 // Contract: the RTC and the system clock hold UTC; the local time comes from one POSIX TZ string that every
-// firmware on the board shares (NVS "gql_time"/"rec"), whichever firmware learned it.
+// part of the firmware shares (NVS "gql_time"/"rec").
 
 #include <stdint.h>
 #include <stdio.h>
@@ -65,7 +65,9 @@ inline int32_t offset_of(const struct tm& local, int64_t utc) {
     return static_cast<int32_t>(local_s - utc);
 }
 
-enum class Source : uint8_t { kNone = 0, kNetwork = 1, kBrowser = 2, kMigrated = 3 };
+// Where the stored zone came from. kUser is the pick on the Settings page ("Set automatically" is off then);
+// versions before 1.0.3 had no internet lookup and stored that pick under the same number.
+enum class Source : uint8_t { kNone = 0, kNetwork = 1, kUser = 2, kMigrated = 3 };
 
 // The shared record (NVS blob). `tz` is what is applied; `zone` is the IANA name when known ("" for a migrated
 // offset). Version 1; a record with another version or broken fields is ignored (the next sync writes a new one).
@@ -90,12 +92,11 @@ inline bool record_valid(const Record& r) {
     return true;
 }
 
-// Does a zone from `incoming` replace what is stored? A network answer always does; a browser zone only when no
-// network zone was ever learned (the IP lookup is the automatic source; the browser covers a board that never
-// reaches the internet); a migrated offset never replaces anything.
+// Does a zone from `incoming` replace what is stored? The user's pick always does, and the internet lookup never
+// replaces it; a network answer replaces everything else; a migrated offset only fills an empty record.
 inline bool should_replace(Source stored, Source incoming) {
-    if (incoming == Source::kNetwork) return true;
-    if (incoming == Source::kBrowser) return stored != Source::kNetwork;
+    if (incoming == Source::kUser) return true;
+    if (incoming == Source::kNetwork) return stored != Source::kUser;
     return stored == Source::kNone;
 }
 
@@ -116,6 +117,172 @@ inline bool migrate_west_minutes(int32_t value, int32_t* offset_s) {
     const int32_t east = -value * 60;
     if (!offset_valid(east)) return false;
     *offset_s = east;
+    return true;
+}
+
+// --- The time-zone service's answer (hande_time.cpp sends a raw HTTP/1.0 request with one hard deadline) ---
+
+// Splits a raw HTTP response into its status code and body (de-chunked if the server chunked it although HTTP/1.0
+// forbids that). Returns the status code, 0 when the response is incomplete or malformed: a body shorter or longer
+// than its Content-Length, or chunks without the final empty chunk, is a cut-off answer and never a result.
+inline int http_answer(const char* raw, size_t len, char* body, size_t capacity) {
+    if (!raw || !body || capacity == 0) return 0;
+    body[0] = '\0';
+    if (len < 12 || strncmp(raw, "HTTP/1.", 7) != 0) return 0;
+    int status = 0;
+    for (size_t i = 9; i < 12; ++i) {
+        if (raw[i] < '0' || raw[i] > '9') return 0;
+        status = status * 10 + (raw[i] - '0');
+    }
+    const char* end = raw + len;
+    const char* head_end = nullptr;
+    for (const char* p = raw; p + 4 <= end; ++p) {
+        if (memcmp(p, "\r\n\r\n", 4) == 0) {
+            head_end = p;
+            break;
+        }
+    }
+    if (!head_end) return 0;
+    bool chunked = false;
+    for (const char* p = raw; p + 26 <= head_end; ++p) {  // "transfer-encoding: chunked", any case
+        if ((p[0] | 0x20) == 't' && strncasecmp(p, "transfer-encoding:", 18) == 0) {
+            const char* v = p + 18;
+            while (v < head_end && *v == ' ') ++v;
+            chunked = head_end - v >= 7 && strncasecmp(v, "chunked", 7) == 0;
+            break;
+        }
+    }
+    const char* p = head_end + 4;
+    size_t used = 0;
+    if (!chunked) {
+        const size_t n = static_cast<size_t>(end - p);
+        for (const char* h = raw; h + 17 <= head_end; ++h) {  // "\r\ncontent-length:", any case
+            if (h[0] != '\r' || h[1] != '\n' || strncasecmp(h + 2, "content-length:", 15) != 0) continue;
+            const char* v = h + 17;
+            while (v < head_end && *v == ' ') ++v;
+            size_t declared = 0;
+            int digits = 0;
+            for (; v < head_end && *v >= '0' && *v <= '9'; ++v) {
+                declared = declared * 10 + static_cast<size_t>(*v - '0');
+                if (++digits > 6) return 0;
+            }
+            while (v < head_end && *v == ' ') ++v;
+            if (!digits || (v != head_end && *v != '\r') || declared != n) return 0;  // "2junk" is no length
+            break;
+        }
+        if (n + 1 > capacity) return 0;
+        memcpy(body, p, n);
+        body[n] = '\0';
+        return status;
+    }
+    for (;;) {
+        size_t size = 0;
+        int digits = 0;
+        while (p < end && ((*p >= '0' && *p <= '9') || ((*p | 0x20) >= 'a' && (*p | 0x20) <= 'f'))) {
+            size = size * 16 + static_cast<size_t>(*p <= '9' ? *p - '0' : (*p | 0x20) - 'a' + 10);
+            ++p;
+            if (++digits > 6) return 0;
+        }
+        if (!digits) return 0;
+        while (p < end && *p != '\r') ++p;  // chunk extensions
+        if (end - p < 2 || p[1] != '\n') return 0;
+        p += 2;
+        if (size == 0) return (end - p == 2 && p[0] == '\r' && p[1] == '\n') ? status : 0;  // "0\r\n\r\n", no trailers
+        if (static_cast<size_t>(end - p) < size + 2 || used + size + 1 > capacity) return 0;
+        memcpy(body + used, p, size);
+        used += size;
+        body[used] = '\0';
+        p += size;
+        if (p[0] != '\r' || p[1] != '\n') return 0;
+        p += 2;
+    }
+}
+
+// {"timezone":"America/New_York","utc_offset_sec":-14400} -> zone + offset. Strict: the whole text is one flat JSON
+// object (white space around and inside it is fine) whose values are plain strings or integers. "timezone" must be
+// a string of at most 47 characters of [A-Za-z0-9/_+-] and "utc_offset_sec" an integer that is a real offset, each
+// exactly once. Everything else is refused: a cut-off answer, a nested value, text after the object.
+inline bool zone_answer(const char* json, char* zone, size_t zone_capacity, int32_t* offset_s) {
+    if (!json || !zone || zone_capacity < 2 || !offset_s) return false;
+    const char* p = json;
+    const auto skip_space = [&p]() {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    };
+    // A plain string (no escapes, no control characters); p ends after the closing quote.
+    const auto plain_string = [&p](const char** begin, size_t* len) {
+        if (*p != '"') return false;
+        const char* start = ++p;
+        while (*p && *p != '"') {
+            if (*p == '\\' || static_cast<unsigned char>(*p) < 0x20) return false;
+            ++p;
+        }
+        if (*p != '"') return false;
+        *begin = start;
+        *len = static_cast<size_t>(p - start);
+        ++p;
+        return true;
+    };
+    char zone_found[48] = "";
+    int32_t offset_found = 0;
+    bool have_zone = false;
+    bool have_offset = false;
+    skip_space();
+    if (*p++ != '{') return false;
+    for (;;) {
+        skip_space();
+        const char* key = nullptr;
+        size_t key_len = 0;
+        if (!plain_string(&key, &key_len)) return false;
+        const bool is_zone = key_len == 8 && memcmp(key, "timezone", 8) == 0;
+        const bool is_offset = key_len == 14 && memcmp(key, "utc_offset_sec", 14) == 0;
+        skip_space();
+        if (*p++ != ':') return false;
+        skip_space();
+        if (*p == '"') {
+            const char* value = nullptr;
+            size_t n = 0;
+            if (!plain_string(&value, &n) || is_offset) return false;
+            if (is_zone) {
+                if (have_zone || n == 0 || n > 47 || n + 1 > zone_capacity) return false;
+                for (size_t i = 0; i < n; ++i) {
+                    const char c = value[i];
+                    const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                                    c == '/' || c == '_' || c == '+' || c == '-';
+                    if (!ok) return false;
+                }
+                memcpy(zone_found, value, n);
+                zone_found[n] = '\0';
+                have_zone = true;
+            }
+        } else {  // an integer; true, false, null, fractions, objects and arrays are not what the service sends
+            const bool negative = *p == '-';
+            if (negative) ++p;
+            int64_t value = 0;
+            int digits = 0;
+            while (*p >= '0' && *p <= '9') {
+                value = value * 10 + (*p++ - '0');
+                if (++digits > 6) return false;
+            }
+            if (!digits || is_zone) return false;
+            if (is_offset) {
+                if (negative) value = -value;
+                if (have_offset || !offset_valid(static_cast<int32_t>(value))) return false;
+                offset_found = static_cast<int32_t>(value);
+                have_offset = true;
+            }
+        }
+        skip_space();
+        if (*p == ',') {
+            ++p;
+            continue;
+        }
+        if (*p++ != '}') return false;
+        break;
+    }
+    skip_space();
+    if (*p != '\0' || !have_zone || !have_offset) return false;
+    strcpy(zone, zone_found);  // fits: checked against zone_capacity above
+    *offset_s = offset_found;
     return true;
 }
 

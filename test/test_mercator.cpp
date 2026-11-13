@@ -39,6 +39,8 @@ void run_usgs_parse_tests();              // test_usgs_parse.cpp
 void run_hande_tz_tests();                // test_hande_tz.cpp
 void run_improv_serial_tests();           // test_improv_serial.cpp
 void run_wifi_scan_tests();               // test_wifi_scan.cpp
+void run_time_policy_tests();             // test_time_policy.cpp
+void run_quake_seen_tests();              // test_quake_seen.cpp
 
 void setup() {
     UNITY_BEGIN();
@@ -52,6 +54,8 @@ void setup() {
     run_hande_tz_tests();
     run_improv_serial_tests();
     run_wifi_scan_tests();
+    run_time_policy_tests();
+    run_quake_seen_tests();
 
     UNITY_END();
 }
